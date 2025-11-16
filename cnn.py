@@ -3,14 +3,14 @@
 CNN from Scratch using CUDA
 Build a simple Convolutional Neural Network using custom CUDA kernels
 
-NOTE: Currently only implements FORWARD PASS.
-TODO: Need to add backprop kernels for actual training.
+Full implementation with forward AND backward passes for training!
 """
 
 import numpy as np
 import ctypes
 import gzip
 import os
+import time
 from urllib import request
 
 
@@ -28,7 +28,7 @@ class CudaCNN:
     def _setup_function_signatures(self):
         """Define ctypes argument types for all CUDA functions"""
 
-        # Conv2D
+        # Conv2D forward
         self.lib.cuda_conv2d.argtypes = [
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
@@ -39,13 +39,34 @@ class CudaCNN:
             ctypes.c_int, ctypes.c_int
         ]
 
-        # ReLU
+        # Conv2D backward
+        self.lib.cuda_conv2d_backward.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int
+        ]
+
+        # ReLU forward
         self.lib.cuda_relu.argtypes = [
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
             ctypes.c_int
         ]
 
-        # MaxPool2D
+        # ReLU backward
+        self.lib.cuda_relu_backward.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            ctypes.c_int
+        ]
+
+        # MaxPool2D forward
         self.lib.cuda_maxpool2d.argtypes = [
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
@@ -53,7 +74,17 @@ class CudaCNN:
             ctypes.c_int, ctypes.c_int
         ]
 
-        # Fully Connected
+        # MaxPool2D backward
+        self.lib.cuda_maxpool2d_backward.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int
+        ]
+
+        # Fully Connected forward
         self.lib.cuda_fc.argtypes = [
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
@@ -62,10 +93,44 @@ class CudaCNN:
             ctypes.c_int, ctypes.c_int, ctypes.c_int
         ]
 
-        # Softmax
+        # Fully Connected backward
+        self.lib.cuda_fc_backward.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            ctypes.c_int, ctypes.c_int, ctypes.c_int
+        ]
+
+        # Softmax forward
         self.lib.cuda_softmax.argtypes = [
             np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
             ctypes.c_int, ctypes.c_int
+        ]
+
+        # Softmax + cross-entropy backward
+        self.lib.cuda_softmax_cross_entropy_backward.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.int32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            ctypes.c_int, ctypes.c_int
+        ]
+
+        # Cross-entropy loss
+        self.lib.cuda_cross_entropy_loss.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.int32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            ctypes.c_int, ctypes.c_int
+        ]
+
+        # SGD update
+        self.lib.cuda_sgd_update.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            np.ctypeslib.ndpointer(dtype=np.float32, flags="C_CONTIGUOUS"),
+            ctypes.c_float, ctypes.c_int
         ]
 
     def conv2d(self, input_tensor, weights, bias, stride=1, padding=0):
@@ -156,7 +221,26 @@ class CudaCNN:
         self.lib.cuda_softmax(data_copy.ravel(), batch, num_classes)
         return data_copy
 
-    def forward(self, x, params):
+    def compute_loss(self, predictions, labels):
+        """Compute cross-entropy loss"""
+        batch_size, num_classes = predictions.shape
+        labels_int = labels.astype(np.int32)
+        loss = np.zeros(1, dtype=np.float32)
+
+        self.lib.cuda_cross_entropy_loss(
+            predictions.ravel(), labels_int, loss,
+            batch_size, num_classes
+        )
+        return loss[0]
+
+    def sgd_update(self, params, gradients, learning_rate):
+        """Update parameters using SGD"""
+        self.lib.cuda_sgd_update(
+            params.ravel(), gradients.ravel(),
+            learning_rate, params.size
+        )
+
+    def forward(self, x, params, save_cache=False):
         """
         Forward pass through a simple CNN
         Architecture: Conv -> ReLU -> MaxPool -> Conv -> ReLU -> MaxPool -> Flatten -> FC -> Softmax
@@ -164,28 +248,182 @@ class CudaCNN:
         Args:
             x: Input tensor [batch, 1, 28, 28] for MNIST-like data
             params: Dictionary of weights and biases
+            save_cache: If True, save intermediate activations for backprop
         Returns:
             output: [batch, num_classes] class probabilities
+            cache: (optional) dictionary of intermediate values for backprop
         """
+        cache = {}  if save_cache else None
+
         # Layer 1: Conv(1->32, 3x3) -> ReLU -> MaxPool(2x2)
-        x = self.conv2d(x, params['conv1_w'], params['conv1_b'], stride=1, padding=1)
-        x = self.relu(x)
-        x = self.maxpool2d(x, pool_size=2, stride=2)
+        if save_cache:
+            cache['input'] = x.copy()
+
+        conv1 = self.conv2d(x, params['conv1_w'], params['conv1_b'], stride=1, padding=1)
+        if save_cache:
+            cache['conv1'] = conv1.copy()
+
+        relu1 = self.relu(conv1)
+        if save_cache:
+            cache['relu1'] = relu1.copy()
+
+        pool1 = self.maxpool2d(relu1, pool_size=2, stride=2)
+        if save_cache:
+            cache['pool1'] = pool1.copy()
 
         # Layer 2: Conv(32->64, 3x3) -> ReLU -> MaxPool(2x2)
-        x = self.conv2d(x, params['conv2_w'], params['conv2_b'], stride=1, padding=1)
-        x = self.relu(x)
-        x = self.maxpool2d(x, pool_size=2, stride=2)
+        conv2 = self.conv2d(pool1, params['conv2_w'], params['conv2_b'], stride=1, padding=1)
+        if save_cache:
+            cache['conv2'] = conv2.copy()
+
+        relu2 = self.relu(conv2)
+        if save_cache:
+            cache['relu2'] = relu2.copy()
+
+        pool2 = self.maxpool2d(relu2, pool_size=2, stride=2)
+        if save_cache:
+            cache['pool2'] = pool2.copy()
 
         # Flatten
-        batch = x.shape[0]
-        x = x.reshape(batch, -1)
+        batch = pool2.shape[0]
+        flattened = pool2.reshape(batch, -1)
+        if save_cache:
+            cache['flattened'] = flattened.copy()
+            cache['pool2_shape'] = pool2.shape
 
         # Fully connected + Softmax
-        x = self.fc(x, params['fc_w'], params['fc_b'])
-        x = self.softmax(x)
+        fc_out = self.fc(flattened, params['fc_w'], params['fc_b'])
+        if save_cache:
+            cache['fc_out'] = fc_out.copy()
 
-        return x
+        softmax_out = self.softmax(fc_out)
+
+        if save_cache:
+            return softmax_out, cache
+        return softmax_out
+
+    def backward(self, predictions, labels, params, cache):
+        """
+        Backward pass to compute gradients
+
+        Args:
+            predictions: Softmax output [batch, num_classes]
+            labels: True labels [batch]
+            params: Current parameters
+            cache: Intermediate activations from forward pass
+        Returns:
+            grads: Dictionary of gradients for all parameters
+        """
+        batch_size = predictions.shape[0]
+        labels_int = labels.astype(np.int32)
+        grads = {}
+
+        # Backward through softmax + cross-entropy
+        grad_fc_out = np.zeros_like(predictions)
+        self.lib.cuda_softmax_cross_entropy_backward(
+            predictions.ravel(), labels_int, grad_fc_out.ravel(),
+            batch_size, 10
+        )
+
+        # Backward through FC layer
+        grad_flattened = np.zeros_like(cache['flattened'])
+        grads['fc_w'] = np.zeros_like(params['fc_w'])
+        grads['fc_b'] = np.zeros_like(params['fc_b'])
+
+        self.lib.cuda_fc_backward(
+            grad_fc_out.ravel(), cache['flattened'].ravel(), params['fc_w'].ravel(),
+            grad_flattened.ravel(), grads['fc_w'].ravel(), grads['fc_b'].ravel(),
+            batch_size, cache['flattened'].shape[1], 10
+        )
+
+        # Reshape back to pool2 shape
+        grad_pool2 = grad_flattened.reshape(cache['pool2_shape'])
+
+        # Backward through MaxPool2
+        grad_relu2 = np.zeros_like(cache['relu2'])
+        pool_size, stride = 2, 2
+        self.lib.cuda_maxpool2d_backward(
+            grad_pool2.ravel(), cache['relu2'].ravel(), cache['pool2'].ravel(),
+            grad_relu2.ravel(),
+            batch_size, 64, cache['relu2'].shape[2], cache['relu2'].shape[3],
+            pool_size, stride
+        )
+
+        # Backward through ReLU2
+        grad_conv2 = np.zeros_like(cache['conv2'])
+        self.lib.cuda_relu_backward(
+            grad_relu2.ravel(), cache['conv2'].ravel(), grad_conv2.ravel(),
+            grad_conv2.size
+        )
+
+        # Backward through Conv2
+        grad_pool1 = np.zeros_like(cache['pool1'])
+        grads['conv2_w'] = np.zeros_like(params['conv2_w'])
+        grads['conv2_b'] = np.zeros_like(params['conv2_b'])
+
+        self.lib.cuda_conv2d_backward(
+            grad_conv2.ravel(), cache['pool1'].ravel(), params['conv2_w'].ravel(),
+            grad_pool1.ravel(), grads['conv2_w'].ravel(), grads['conv2_b'].ravel(),
+            batch_size, 32, 64,
+            cache['pool1'].shape[2], cache['pool1'].shape[3], 3, 3, 1, 1
+        )
+
+        # Backward through MaxPool1
+        grad_relu1 = np.zeros_like(cache['relu1'])
+        self.lib.cuda_maxpool2d_backward(
+            grad_pool1.ravel(), cache['relu1'].ravel(), cache['pool1'].ravel(),
+            grad_relu1.ravel(),
+            batch_size, 32, cache['relu1'].shape[2], cache['relu1'].shape[3],
+            pool_size, stride
+        )
+
+        # Backward through ReLU1
+        grad_conv1 = np.zeros_like(cache['conv1'])
+        self.lib.cuda_relu_backward(
+            grad_relu1.ravel(), cache['conv1'].ravel(), grad_conv1.ravel(),
+            grad_conv1.size
+        )
+
+        # Backward through Conv1
+        grad_input = np.zeros_like(cache['input'])
+        grads['conv1_w'] = np.zeros_like(params['conv1_w'])
+        grads['conv1_b'] = np.zeros_like(params['conv1_b'])
+
+        self.lib.cuda_conv2d_backward(
+            grad_conv1.ravel(), cache['input'].ravel(), params['conv1_w'].ravel(),
+            grad_input.ravel(), grads['conv1_w'].ravel(), grads['conv1_b'].ravel(),
+            batch_size, 1, 32,
+            cache['input'].shape[2], cache['input'].shape[3], 3, 3, 1, 1
+        )
+
+        return grads
+
+    def train_step(self, x_batch, y_batch, params, learning_rate):
+        """
+        Single training step: forward + backward + update
+
+        Args:
+            x_batch: Input batch [batch, 1, 28, 28]
+            y_batch: Labels [batch]
+            params: Current parameters
+            learning_rate: Learning rate for SGD
+        Returns:
+            loss: Training loss for this batch
+        """
+        # Forward pass with caching
+        predictions, cache = self.forward(x_batch, params, save_cache=True)
+
+        # Compute loss
+        loss = self.compute_loss(predictions, y_batch)
+
+        # Backward pass
+        grads = self.backward(predictions, y_batch, params, cache)
+
+        # Update parameters
+        for key in params:
+            self.sgd_update(params[key], grads[key], learning_rate)
+
+        return loss
 
 
 def initialize_params():
@@ -249,73 +487,144 @@ def load_mnist(data_dir='./data'):
     return (train_images, train_labels), (test_images, test_labels)
 
 
+def evaluate(cnn, images, labels, params, batch_size=100):
+    """Evaluate accuracy on a dataset"""
+    n_samples = len(images)
+    correct = 0
+
+    for i in range(0, n_samples, batch_size):
+        batch_x = images[i:i+batch_size]
+        batch_y = labels[i:i+batch_size]
+
+        predictions = cnn.forward(batch_x, params, save_cache=False)
+        pred_labels = predictions.argmax(axis=1)
+        correct += (pred_labels == batch_y).sum()
+
+    return correct / n_samples
+
+
 def main():
-    """Test the CUDA CNN implementation with MNIST data"""
-    print("=" * 60)
-    print("CNN from Scratch using CUDA")
-    print("=" * 60)
+    """Train a CUDA CNN on MNIST"""
+    print("=" * 70)
+    print(" " * 20 + "CUDA CNN Training")
+    print("=" * 70)
     print()
 
     # Load MNIST data
     print("Loading MNIST dataset...")
     (train_images, train_labels), (test_images, test_labels) = load_mnist()
+    print(f"  Train: {len(train_images)} images")
+    print(f"  Test:  {len(test_images)} images")
     print()
 
     # Initialize CNN
     print("Loading CUDA CNN library...")
     cnn = CudaCNN()
-    print("Library loaded successfully!")
+    print("  Library loaded successfully!")
     print()
 
-    # Initialize parameters (random weights - NOT TRAINED!)
-    print("Initializing network parameters (random weights)...")
+    # Initialize parameters
+    print("Initializing network parameters...")
     params = initialize_params()
-    print(f"  Conv1: {params['conv1_w'].shape} weights, {params['conv1_b'].shape} biases")
-    print(f"  Conv2: {params['conv2_w'].shape} weights, {params['conv2_b'].shape} biases")
-    print(f"  FC:    {params['fc_w'].shape} weights, {params['fc_b'].shape} biases")
+    print(f"  Conv1: {params['conv1_w'].shape}")
+    print(f"  Conv2: {params['conv2_w'].shape}")
+    print(f"  FC:    {params['fc_w'].shape}")
     print()
 
-    # Test on a small batch of real MNIST images
-    batch_size = 8
-    x = test_images[:batch_size]
-    y = test_labels[:batch_size]
-    print(f"Testing on {batch_size} real MNIST images")
-    print(f"True labels: {y}")
+    # Training hyperparameters
+    epochs = 3
+    batch_size = 32
+    learning_rate = 0.01
+    print_every = 100
+
+    print(f"Training Configuration:")
+    print(f"  Epochs: {epochs}")
+    print(f"  Batch size: {batch_size}")
+    print(f"  Learning rate: {learning_rate}")
+    print(f"  Training batches per epoch: {len(train_images) // batch_size}")
     print()
 
-    # Forward pass
-    print("Running forward pass through CNN...")
-    print("  [1/5] Conv1 + ReLU + MaxPool")
-    print("  [2/5] Conv2 + ReLU + MaxPool")
-    print("  [3/5] Flatten")
-    print("  [4/5] Fully Connected")
-    print("  [5/5] Softmax")
-    output = cnn.forward(x, params)
+    # Evaluate before training
+    print("Evaluating on test set before training...")
+    test_acc = evaluate(cnn, test_images[:1000], test_labels[:1000], params)
+    print(f"  Initial test accuracy: {test_acc * 100:.2f}%")
     print()
 
-    # Show predictions
-    predictions = output.argmax(axis=1)
-    print(f"Predictions: {predictions}")
-    print(f"Accuracy: {(predictions == y).mean() * 100:.1f}% (should be ~10% for random weights)")
+    print("=" * 70)
+    print("Starting Training")
+    print("=" * 70)
     print()
 
-    # Show confidence for each sample
-    print("Detailed predictions:")
-    for i in range(batch_size):
-        predicted = predictions[i]
-        true_label = y[i]
-        confidence = output[i, predicted]
-        correct = "✓" if predicted == true_label else "✗"
-        print(f"  Sample {i}: Predicted={predicted}, True={true_label}, Confidence={confidence:.4f} {correct}")
+    # Training loop
+    for epoch in range(epochs):
+        epoch_start = time.time()
+        epoch_loss = 0.0
+        n_batches = 0
+
+        # Shuffle training data
+        indices = np.random.permutation(len(train_images))
+        train_images_shuffled = train_images[indices]
+        train_labels_shuffled = train_labels[indices]
+
+        print(f"Epoch {epoch + 1}/{epochs}")
+
+        for i in range(0, len(train_images), batch_size):
+            batch_x = train_images_shuffled[i:i+batch_size]
+            batch_y = train_labels_shuffled[i:i+batch_size]
+
+            # Skip incomplete batches
+            if len(batch_x) < batch_size:
+                continue
+
+            # Training step
+            loss = cnn.train_step(batch_x, batch_y, params, learning_rate)
+            epoch_loss += loss
+            n_batches += 1
+
+            # Print progress
+            if n_batches % print_every == 0:
+                avg_loss = epoch_loss / n_batches
+                print(f"  Batch {n_batches:4d}: Loss = {avg_loss:.4f}")
+
+        # Epoch summary
+        epoch_time = time.time() - epoch_start
+        avg_loss = epoch_loss / n_batches
+        print(f"  Epoch {epoch + 1} completed in {epoch_time:.1f}s, Avg Loss = {avg_loss:.4f}")
+
+        # Evaluate on test set
+        test_acc = evaluate(cnn, test_images[:1000], test_labels[:1000], params)
+        print(f"  Test accuracy: {test_acc * 100:.2f}%")
+        print()
+
+    print("=" * 70)
+    print("Training Complete!")
+    print("=" * 70)
+    print()
+
+    # Final evaluation on full test set
+    print("Final evaluation on full test set...")
+    final_acc = evaluate(cnn, test_images, test_labels, params)
+    print(f"  Final test accuracy: {final_acc * 100:.2f}%")
+    print()
+
+    # Show some predictions
+    print("Sample predictions:")
+    sample_idx = np.random.choice(len(test_images), 10, replace=False)
+    sample_x = test_images[sample_idx]
+    sample_y = test_labels[sample_idx]
+
+    predictions = cnn.forward(sample_x, params, save_cache=False)
+    pred_labels = predictions.argmax(axis=1)
+
+    for i in range(10):
+        pred = pred_labels[i]
+        true = sample_y[i]
+        conf = predictions[i, pred]
+        status = "✓" if pred == true else "✗"
+        print(f"  {status} Predicted: {pred}, True: {true}, Confidence: {conf:.3f}")
 
     print()
-    print("=" * 60)
-    print("LIMITATIONS:")
-    print("- Forward pass only (no backprop implemented)")
-    print("- Random weights (no training implemented)")
-    print("- Need to add: Conv/Pool/ReLU backward kernels")
-    print("- Need to add: Proper training loop with SGD")
-    print("=" * 60)
+    print("=" * 70)
 
 
 if __name__ == "__main__":

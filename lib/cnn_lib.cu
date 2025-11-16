@@ -308,11 +308,69 @@ void cuda_softmax(float* data, int batch_size, int num_classes) {
     cudaFree(d_data);
 }
 
-// Cross-entropy loss kernel
-void cuda_cross_entropy_loss(
-    const float* predictions,  // [batch, num_classes]
+// Softmax + Cross-entropy backward (combined for numerical stability)
+__global__ void softmax_cross_entropy_backward_kernel(
+    const float* predictions,  // [batch, num_classes] - softmax output
     const int* labels,         // [batch]
-    float* loss,               // [1] output
+    float* grad_output,        // [batch, num_classes] - gradient output
+    int batch_size,
+    int num_classes
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * num_classes;
+
+    if (idx < total) {
+        int class_idx = idx % num_classes;
+        int b = idx / num_classes;
+        int true_label = labels[b];
+
+        // d(loss)/d(logits) for softmax + cross-entropy
+        float grad = predictions[idx];
+        if (class_idx == true_label) {
+            grad -= 1.0f;
+        }
+        grad_output[idx] = grad / batch_size;  // Average over batch
+    }
+}
+
+void cuda_softmax_cross_entropy_backward(
+    const float* predictions,
+    const int* labels,
+    float* grad_output,
+    int batch_size,
+    int num_classes
+) {
+    int total = batch_size * num_classes;
+
+    float *d_predictions, *d_grad_output;
+    int *d_labels;
+
+    cudaMalloc(&d_predictions, total * sizeof(float));
+    cudaMalloc(&d_labels, batch_size * sizeof(int));
+    cudaMalloc(&d_grad_output, total * sizeof(float));
+
+    cudaMemcpy(d_predictions, predictions, total * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_labels, labels, batch_size * sizeof(int), cudaMemcpyHostToDevice);
+
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    softmax_cross_entropy_backward_kernel<<<blocks, threads>>>(
+        d_predictions, d_labels, d_grad_output, batch_size, num_classes
+    );
+
+    cudaDeviceSynchronize();
+    cudaMemcpy(grad_output, d_grad_output, total * sizeof(float), cudaMemcpyDeviceToHost);
+
+    cudaFree(d_predictions);
+    cudaFree(d_labels);
+    cudaFree(d_grad_output);
+}
+
+// Cross-entropy loss (forward)
+void cuda_cross_entropy_loss(
+    const float* predictions,
+    const int* labels,
+    float* loss,
     int batch_size,
     int num_classes
 ) {
@@ -320,9 +378,344 @@ void cuda_cross_entropy_loss(
     for (int b = 0; b < batch_size; b++) {
         int label = labels[b];
         float pred = predictions[b * num_classes + label];
-        total_loss += -logf(fmaxf(pred, 1e-10f));  // Avoid log(0)
+        total_loss += -logf(fmaxf(pred, 1e-10f));
     }
     *loss = total_loss / batch_size;
+}
+
+// FC backward
+__global__ void fc_backward_kernel(
+    const float* grad_output,  // [batch, out_features]
+    const float* input,        // [batch, in_features]
+    const float* weights,      // [out_features, in_features]
+    float* grad_input,         // [batch, in_features]
+    float* grad_weights,       // [out_features, in_features]
+    float* grad_bias,          // [out_features]
+    int batch_size,
+    int in_features,
+    int out_features
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Compute grad_input
+    int total_input = batch_size * in_features;
+    if (idx < total_input) {
+        int in_idx = idx % in_features;
+        int b = idx / in_features;
+
+        float grad = 0.0f;
+        for (int o = 0; o < out_features; o++) {
+            grad += grad_output[b * out_features + o] * weights[o * in_features + in_idx];
+        }
+        grad_input[idx] = grad;
+    }
+
+    // Compute grad_weights (use atomic adds for parallel safety)
+    int total_weights = out_features * in_features;
+    if (idx < total_weights) {
+        int in_idx = idx % in_features;
+        int out_idx = idx / in_features;
+
+        float grad = 0.0f;
+        for (int b = 0; b < batch_size; b++) {
+            grad += grad_output[b * out_features + out_idx] * input[b * in_features + in_idx];
+        }
+        grad_weights[idx] = grad;
+    }
+
+    // Compute grad_bias
+    if (idx < out_features) {
+        float grad = 0.0f;
+        for (int b = 0; b < batch_size; b++) {
+            grad += grad_output[b * out_features + idx];
+        }
+        grad_bias[idx] = grad;
+    }
+}
+
+void cuda_fc_backward(
+    const float* grad_output,
+    const float* input,
+    const float* weights,
+    float* grad_input,
+    float* grad_weights,
+    float* grad_bias,
+    int batch_size,
+    int in_features,
+    int out_features
+) {
+    int max_size = fmaxf(batch_size * in_features, out_features * in_features);
+    max_size = fmaxf(max_size, out_features);
+
+    float *d_grad_output, *d_input, *d_weights, *d_grad_input, *d_grad_weights, *d_grad_bias;
+
+    cudaMalloc(&d_grad_output, batch_size * out_features * sizeof(float));
+    cudaMalloc(&d_input, batch_size * in_features * sizeof(float));
+    cudaMalloc(&d_weights, out_features * in_features * sizeof(float));
+    cudaMalloc(&d_grad_input, batch_size * in_features * sizeof(float));
+    cudaMalloc(&d_grad_weights, out_features * in_features * sizeof(float));
+    cudaMalloc(&d_grad_bias, out_features * sizeof(float));
+
+    cudaMemcpy(d_grad_output, grad_output, batch_size * out_features * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_input, input, batch_size * in_features * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_weights, weights, out_features * in_features * sizeof(float), cudaMemcpyHostToDevice);
+
+    int threads = 256;
+    int blocks = (max_size + threads - 1) / threads;
+
+    fc_backward_kernel<<<blocks, threads>>>(
+        d_grad_output, d_input, d_weights,
+        d_grad_input, d_grad_weights, d_grad_bias,
+        batch_size, in_features, out_features
+    );
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(grad_input, d_grad_input, batch_size * in_features * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(grad_weights, d_grad_weights, out_features * in_features * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(grad_bias, d_grad_bias, out_features * sizeof(float), cudaMemcpyDeviceToHost);
+
+    cudaFree(d_grad_output);
+    cudaFree(d_input);
+    cudaFree(d_weights);
+    cudaFree(d_grad_input);
+    cudaFree(d_grad_weights);
+    cudaFree(d_grad_bias);
+}
+
+// ReLU backward
+__global__ void relu_backward_kernel(
+    const float* grad_output,  // gradient from next layer
+    const float* input,        // input to ReLU (before activation)
+    float* grad_input,         // gradient to pass back
+    int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        grad_input[idx] = (input[idx] > 0.0f) ? grad_output[idx] : 0.0f;
+    }
+}
+
+void cuda_relu_backward(
+    const float* grad_output,
+    const float* input,
+    float* grad_input,
+    int size
+) {
+    float *d_grad_output, *d_input, *d_grad_input;
+
+    cudaMalloc(&d_grad_output, size * sizeof(float));
+    cudaMalloc(&d_input, size * sizeof(float));
+    cudaMalloc(&d_grad_input, size * sizeof(float));
+
+    cudaMemcpy(d_grad_output, grad_output, size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_input, input, size * sizeof(float), cudaMemcpyHostToDevice);
+
+    int threads = 256;
+    int blocks = (size + threads - 1) / threads;
+    relu_backward_kernel<<<blocks, threads>>>(d_grad_output, d_input, d_grad_input, size);
+
+    cudaDeviceSynchronize();
+    cudaMemcpy(grad_input, d_grad_input, size * sizeof(float), cudaMemcpyDeviceToHost);
+
+    cudaFree(d_grad_output);
+    cudaFree(d_input);
+    cudaFree(d_grad_input);
+}
+
+// MaxPool backward
+__global__ void maxpool2d_backward_kernel(
+    const float* grad_output,  // [batch, channels, out_h, out_w]
+    const float* input,        // [batch, channels, input_h, input_w]
+    const float* output,       // [batch, channels, out_h, out_w] - forward output
+    float* grad_input,         // [batch, channels, input_h, input_w]
+    int batch_size,
+    int channels,
+    int input_h,
+    int input_w,
+    int pool_size,
+    int stride
+) {
+    int out_h = (input_h - pool_size) / stride + 1;
+    int out_w = (input_w - pool_size) / stride + 1;
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * channels * out_h * out_w;
+
+    if (idx < total) {
+        int w_out = idx % out_w;
+        int h_out = (idx / out_w) % out_h;
+        int c = (idx / (out_w * out_h)) % channels;
+        int b = idx / (out_w * out_h * channels);
+
+        float max_val = output[idx];
+        float grad = grad_output[idx];
+
+        // Find which input position produced the max
+        for (int ph = 0; ph < pool_size; ph++) {
+            for (int pw = 0; pw < pool_size; pw++) {
+                int h_in = h_out * stride + ph;
+                int w_in = w_out * stride + pw;
+                int input_idx = ((b * channels + c) * input_h + h_in) * input_w + w_in;
+
+                if (input[input_idx] == max_val) {
+                    atomicAdd(&grad_input[input_idx], grad);
+                    return;  // Only one position gets the gradient
+                }
+            }
+        }
+    }
+}
+
+void cuda_maxpool2d_backward(
+    const float* grad_output,
+    const float* input,
+    const float* output,
+    float* grad_input,
+    int batch_size,
+    int channels,
+    int input_h,
+    int input_w,
+    int pool_size,
+    int stride
+) {
+    int out_h = (input_h - pool_size) / stride + 1;
+    int out_w = (input_w - pool_size) / stride + 1;
+    int total_out = batch_size * channels * out_h * out_w;
+    int total_in = batch_size * channels * input_h * input_w;
+
+    float *d_grad_output, *d_input, *d_output, *d_grad_input;
+
+    cudaMalloc(&d_grad_output, total_out * sizeof(float));
+    cudaMalloc(&d_input, total_in * sizeof(float));
+    cudaMalloc(&d_output, total_out * sizeof(float));
+    cudaMalloc(&d_grad_input, total_in * sizeof(float));
+
+    cudaMemcpy(d_grad_output, grad_output, total_out * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_input, input, total_in * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_output, output, total_out * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemset(d_grad_input, 0, total_in * sizeof(float));  // Initialize to zero
+
+    int threads = 256;
+    int blocks = (total_out + threads - 1) / threads;
+
+    maxpool2d_backward_kernel<<<blocks, threads>>>(
+        d_grad_output, d_input, d_output, d_grad_input,
+        batch_size, channels, input_h, input_w, pool_size, stride
+    );
+
+    cudaDeviceSynchronize();
+    cudaMemcpy(grad_input, d_grad_input, total_in * sizeof(float), cudaMemcpyDeviceToHost);
+
+    cudaFree(d_grad_output);
+    cudaFree(d_input);
+    cudaFree(d_output);
+    cudaFree(d_grad_input);
+}
+
+// Conv2D backward (simplified - computes all gradients)
+__global__ void conv2d_backward_kernel(
+    const float* grad_output,  // [batch, out_channels, out_h, out_w]
+    const float* input,        // [batch, in_channels, input_h, input_w]
+    const float* weights,      // [out_channels, in_channels, kernel_h, kernel_w]
+    float* grad_input,         // [batch, in_channels, input_h, input_w]
+    float* grad_weights,       // [out_channels, in_channels, kernel_h, kernel_w]
+    float* grad_bias,          // [out_channels]
+    int batch_size,
+    int in_channels,
+    int out_channels,
+    int input_h,
+    int input_w,
+    int kernel_h,
+    int kernel_w,
+    int stride,
+    int padding
+) {
+    int out_h = (input_h + 2 * padding - kernel_h) / stride + 1;
+    int out_w = (input_w + 2 * padding - kernel_w) / stride + 1;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Compute grad_bias (simple sum over all positions)
+    if (idx < out_channels) {
+        float grad = 0.0f;
+        for (int b = 0; b < batch_size; b++) {
+            for (int h = 0; h < out_h; h++) {
+                for (int w = 0; w < out_w; w++) {
+                    int out_idx = ((b * out_channels + idx) * out_h + h) * out_w + w;
+                    grad += grad_output[out_idx];
+                }
+            }
+        }
+        grad_bias[idx] = grad;
+    }
+}
+
+void cuda_conv2d_backward(
+    const float* grad_output,
+    const float* input,
+    const float* weights,
+    float* grad_input,
+    float* grad_weights,
+    float* grad_bias,
+    int batch_size,
+    int in_channels,
+    int out_channels,
+    int input_h,
+    int input_w,
+    int kernel_h,
+    int kernel_w,
+    int stride,
+    int padding
+) {
+    int out_h = (input_h + 2 * padding - kernel_h) / stride + 1;
+    int out_w = (input_w + 2 * padding - kernel_w) / stride + 1;
+
+    // For simplicity, compute gradients on CPU (or use cuDNN in practice)
+    // This is a simplified implementation - a full one would parallelize better
+
+    // Initialize gradients to zero
+    int input_size = batch_size * in_channels * input_h * input_w;
+    int weight_size = out_channels * in_channels * kernel_h * kernel_w;
+
+    memset(grad_input, 0, input_size * sizeof(float));
+    memset(grad_weights, 0, weight_size * sizeof(float));
+    memset(grad_bias, 0, out_channels * sizeof(float));
+
+    // Compute gradients (CPU version for simplicity)
+    for (int b = 0; b < batch_size; b++) {
+        for (int oc = 0; oc < out_channels; oc++) {
+            for (int oh = 0; oh < out_h; oh++) {
+                for (int ow = 0; ow < out_w; ow++) {
+                    int out_idx = ((b * out_channels + oc) * out_h + oh) * out_w + ow;
+                    float grad = grad_output[out_idx];
+
+                    // Accumulate bias gradient
+                    grad_bias[oc] += grad;
+
+                    // Accumulate weight and input gradients
+                    for (int ic = 0; ic < in_channels; ic++) {
+                        for (int kh = 0; kh < kernel_h; kh++) {
+                            for (int kw = 0; kw < kernel_w; kw++) {
+                                int h_in = oh * stride - padding + kh;
+                                int w_in = ow * stride - padding + kw;
+
+                                if (h_in >= 0 && h_in < input_h && w_in >= 0 && w_in < input_w) {
+                                    int input_idx = ((b * in_channels + ic) * input_h + h_in) * input_w + w_in;
+                                    int weight_idx = ((oc * in_channels + ic) * kernel_h + kh) * kernel_w + kw;
+
+                                    // Gradient w.r.t. weights
+                                    grad_weights[weight_idx] += grad * input[input_idx];
+
+                                    // Gradient w.r.t. input
+                                    grad_input[input_idx] += grad * weights[weight_idx];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // SGD parameter update kernel
