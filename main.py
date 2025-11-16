@@ -339,8 +339,8 @@ def compile_convolution_programs():
     print("Compiling Convolution Programs")
     print("=" * 60)
 
-    run_command("gcc conv_cpu.c -O2 -o conv_cpu", "Compiling CPU convolution")
-    run_command("nvcc conv_gpu.cu -O2 -o conv_gpu", "Compiling GPU convolution")
+    run_command("gcc benchmarks/conv_cpu.c -O2 -o conv_cpu", "Compiling CPU convolution")
+    run_command("nvcc benchmarks/conv_gpu.cu -O2 -o conv_gpu", "Compiling GPU convolution")
 
     print("All convolution programs compiled successfully!\n")
 
@@ -480,9 +480,9 @@ def compile_shared_libraries():
     print("Compiling Shared Libraries")
     print("=" * 60)
 
-    run_command("nvcc -Xcompiler -fPIC -shared matrix_lib.cu -O2 -o libmatrix.so",
+    run_command("nvcc -Xcompiler -fPIC -shared lib/matrix_lib.cu -O2 -o libmatrix.so",
                 "Compiling matrix library")
-    run_command("nvcc -Xcompiler -fPIC -shared conv_lib.cu -O2 -o libconv.so",
+    run_command("nvcc -Xcompiler -fPIC -shared lib/conv_lib.cu -O2 -o libconv.so",
                 "Compiling convolution library")
 
     print("Shared libraries compiled successfully!\n")
