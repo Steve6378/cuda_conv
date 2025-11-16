@@ -87,7 +87,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 """
-    with open("matrix_cpu.c", "w") as f:
+    with open("benchmarks/matrix_cpu.c", "w") as f:
         f.write(code)
 
 
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 """
-    with open("matrix_gpu_naive.cu", "w") as f:
+    with open("benchmarks/matrix_gpu_naive.cu", "w") as f:
         f.write(code)
 
 
@@ -249,7 +249,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 """
-    with open("matrix_gpu_tiled.cu", "w") as f:
+    with open("benchmarks/matrix_gpu_tiled.cu", "w") as f:
         f.write(code)
 
 
@@ -315,7 +315,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 """
-    with open("matrix_cublas.cu", "w") as f:
+    with open("benchmarks/matrix_cublas.cu", "w") as f:
         f.write(code)
 
 
@@ -325,10 +325,10 @@ def compile_matrix_programs():
     print("Compiling Matrix Multiplication Programs")
     print("=" * 60)
 
-    run_command("gcc matrix_cpu.c -O2 -o matrix_cpu", "Compiling CPU version")
-    run_command("nvcc matrix_gpu_naive.cu -O2 -o matrix_gpu_naive", "Compiling naive GPU version")
-    run_command("nvcc matrix_gpu_tiled.cu -O2 -o matrix_gpu_tiled", "Compiling tiled GPU version")
-    run_command("nvcc matrix_cublas.cu -lcublas -O2 -o matrix_cublas", "Compiling cuBLAS version")
+    run_command("gcc benchmarks/matrix_cpu.c -O2 -o matrix_cpu", "Compiling CPU version")
+    run_command("nvcc benchmarks/matrix_gpu_naive.cu -O2 -o matrix_gpu_naive", "Compiling naive GPU version")
+    run_command("nvcc benchmarks/matrix_gpu_tiled.cu -O2 -o matrix_gpu_tiled", "Compiling tiled GPU version")
+    run_command("nvcc benchmarks/matrix_cublas.cu -lcublas -O2 -o matrix_cublas", "Compiling cuBLAS version")
 
     print("All matrix programs compiled successfully!\n")
 
@@ -517,20 +517,20 @@ def main():
     check_gpu()
 
     # Generate source files if they don't exist
-    if not os.path.exists("matrix_cpu.c"):
-        print("Generating matrix_cpu.c...")
+    if not os.path.exists("benchmarks/matrix_cpu.c"):
+        print("Generating benchmarks/matrix_cpu.c...")
         write_matrix_cpu()
 
-    if not os.path.exists("matrix_gpu_naive.cu"):
-        print("Generating matrix_gpu_naive.cu...")
+    if not os.path.exists("benchmarks/matrix_gpu_naive.cu"):
+        print("Generating benchmarks/matrix_gpu_naive.cu...")
         write_matrix_gpu_naive()
 
-    if not os.path.exists("matrix_gpu_tiled.cu"):
-        print("Generating matrix_gpu_tiled.cu...")
+    if not os.path.exists("benchmarks/matrix_gpu_tiled.cu"):
+        print("Generating benchmarks/matrix_gpu_tiled.cu...")
         write_matrix_gpu_tiled()
 
-    if not os.path.exists("matrix_cublas.cu"):
-        print("Generating matrix_cublas.cu...")
+    if not os.path.exists("benchmarks/matrix_cublas.cu"):
+        print("Generating benchmarks/matrix_cublas.cu...")
         write_matrix_cublas()
 
     # Compile programs
