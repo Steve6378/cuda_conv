@@ -2,10 +2,16 @@
 """
 CNN from Scratch using CUDA
 Build a simple Convolutional Neural Network using custom CUDA kernels
+
+NOTE: Currently only implements FORWARD PASS.
+TODO: Need to add backprop kernels for actual training.
 """
 
 import numpy as np
 import ctypes
+import gzip
+import os
+from urllib import request
 
 
 class CudaCNN:
@@ -203,11 +209,56 @@ def initialize_params():
     return params
 
 
+def load_mnist(data_dir='./data'):
+    """Download and load MNIST dataset"""
+    os.makedirs(data_dir, exist_ok=True)
+
+    base_url = 'http://yann.lecun.com/exdb/mnist/'
+    files = {
+        'train_images': 'train-images-idx3-ubyte.gz',
+        'train_labels': 'train-labels-idx1-ubyte.gz',
+        'test_images': 't10k-images-idx3-ubyte.gz',
+        'test_labels': 't10k-labels-idx1-ubyte.gz',
+    }
+
+    # Download files if not present
+    for key, filename in files.items():
+        filepath = os.path.join(data_dir, filename)
+        if not os.path.exists(filepath):
+            print(f"Downloading {filename}...")
+            request.urlretrieve(base_url + filename, filepath)
+
+    # Load training data
+    with gzip.open(os.path.join(data_dir, files['train_images']), 'rb') as f:
+        train_images = np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 1, 28, 28)
+    with gzip.open(os.path.join(data_dir, files['train_labels']), 'rb') as f:
+        train_labels = np.frombuffer(f.read(), np.uint8, offset=8)
+
+    # Load test data
+    with gzip.open(os.path.join(data_dir, files['test_images']), 'rb') as f:
+        test_images = np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 1, 28, 28)
+    with gzip.open(os.path.join(data_dir, files['test_labels']), 'rb') as f:
+        test_labels = np.frombuffer(f.read(), np.uint8, offset=8)
+
+    # Normalize to [0, 1]
+    train_images = train_images.astype(np.float32) / 255.0
+    test_images = test_images.astype(np.float32) / 255.0
+
+    print(f"Loaded MNIST: {len(train_images)} training, {len(test_images)} test images")
+
+    return (train_images, train_labels), (test_images, test_labels)
+
+
 def main():
-    """Test the CUDA CNN implementation"""
+    """Test the CUDA CNN implementation with MNIST data"""
     print("=" * 60)
     print("CNN from Scratch using CUDA")
     print("=" * 60)
+    print()
+
+    # Load MNIST data
+    print("Loading MNIST dataset...")
+    (train_images, train_labels), (test_images, test_labels) = load_mnist()
     print()
 
     # Initialize CNN
@@ -216,18 +267,20 @@ def main():
     print("Library loaded successfully!")
     print()
 
-    # Initialize parameters
-    print("Initializing network parameters...")
+    # Initialize parameters (random weights - NOT TRAINED!)
+    print("Initializing network parameters (random weights)...")
     params = initialize_params()
     print(f"  Conv1: {params['conv1_w'].shape} weights, {params['conv1_b'].shape} biases")
     print(f"  Conv2: {params['conv2_w'].shape} weights, {params['conv2_b'].shape} biases")
     print(f"  FC:    {params['fc_w'].shape} weights, {params['fc_b'].shape} biases")
     print()
 
-    # Create dummy MNIST-like input (batch_size=2, channels=1, height=28, width=28)
-    batch_size = 2
-    x = np.random.randn(batch_size, 1, 28, 28).astype(np.float32)
-    print(f"Input shape: {x.shape}")
+    # Test on a small batch of real MNIST images
+    batch_size = 8
+    x = test_images[:batch_size]
+    y = test_labels[:batch_size]
+    print(f"Testing on {batch_size} real MNIST images")
+    print(f"True labels: {y}")
     print()
 
     # Forward pass
@@ -240,22 +293,28 @@ def main():
     output = cnn.forward(x, params)
     print()
 
-    print(f"Output shape: {output.shape}")
-    print(f"Output (class probabilities):")
-    print(output)
+    # Show predictions
+    predictions = output.argmax(axis=1)
+    print(f"Predictions: {predictions}")
+    print(f"Accuracy: {(predictions == y).mean() * 100:.1f}% (should be ~10% for random weights)")
     print()
 
-    # Verify probabilities sum to 1
-    print("Verification:")
+    # Show confidence for each sample
+    print("Detailed predictions:")
     for i in range(batch_size):
-        prob_sum = output[i].sum()
-        predicted_class = output[i].argmax()
-        confidence = output[i].max()
-        print(f"  Sample {i}: Predicted class = {predicted_class}, Confidence = {confidence:.4f}, Sum = {prob_sum:.6f}")
+        predicted = predictions[i]
+        true_label = y[i]
+        confidence = output[i, predicted]
+        correct = "✓" if predicted == true_label else "✗"
+        print(f"  Sample {i}: Predicted={predicted}, True={true_label}, Confidence={confidence:.4f} {correct}")
 
     print()
     print("=" * 60)
-    print("CNN test completed successfully!")
+    print("LIMITATIONS:")
+    print("- Forward pass only (no backprop implemented)")
+    print("- Random weights (no training implemented)")
+    print("- Need to add: Conv/Pool/ReLU backward kernels")
+    print("- Need to add: Proper training loop with SGD")
     print("=" * 60)
 
 

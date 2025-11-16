@@ -308,4 +308,58 @@ void cuda_softmax(float* data, int batch_size, int num_classes) {
     cudaFree(d_data);
 }
 
+// Cross-entropy loss kernel
+void cuda_cross_entropy_loss(
+    const float* predictions,  // [batch, num_classes]
+    const int* labels,         // [batch]
+    float* loss,               // [1] output
+    int batch_size,
+    int num_classes
+) {
+    float total_loss = 0.0f;
+    for (int b = 0; b < batch_size; b++) {
+        int label = labels[b];
+        float pred = predictions[b * num_classes + label];
+        total_loss += -logf(fmaxf(pred, 1e-10f));  // Avoid log(0)
+    }
+    *loss = total_loss / batch_size;
+}
+
+// SGD parameter update kernel
+__global__ void sgd_update_kernel(
+    float* params,
+    const float* gradients,
+    float learning_rate,
+    int size
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        params[idx] -= learning_rate * gradients[idx];
+    }
+}
+
+void cuda_sgd_update(
+    float* params,
+    const float* gradients,
+    float learning_rate,
+    int size
+) {
+    float *d_params, *d_gradients;
+    cudaMalloc(&d_params, size * sizeof(float));
+    cudaMalloc(&d_gradients, size * sizeof(float));
+
+    cudaMemcpy(d_params, params, size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_gradients, gradients, size * sizeof(float), cudaMemcpyHostToDevice);
+
+    int threads = 256;
+    int blocks = (size + threads - 1) / threads;
+    sgd_update_kernel<<<blocks, threads>>>(d_params, d_gradients, learning_rate, size);
+
+    cudaDeviceSynchronize();
+    cudaMemcpy(params, d_params, size * sizeof(float), cudaMemcpyDeviceToHost);
+
+    cudaFree(d_params);
+    cudaFree(d_gradients);
+}
+
 } // extern "C"

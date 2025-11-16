@@ -213,6 +213,8 @@ def compile_shared_libraries():
                 "Compiling matrix library")
     run_command("nvcc -Xcompiler -fPIC -shared lib/conv_lib.cu -O2 -o libconv.so",
                 "Compiling convolution library")
+    run_command("nvcc -Xcompiler -fPIC -shared lib/cnn_lib.cu -O2 -o libcnn.so",
+                "Compiling CNN library")
 
     print("Shared libraries compiled successfully!\n")
 
@@ -223,14 +225,19 @@ def test_shared_libraries():
     print("Testing Shared Libraries")
     print("=" * 60)
 
-    if os.path.exists("test_matrix_lib.py"):
+    if os.path.exists("tests/test_matrix_lib.py"):
         print("\n[Testing matrix library]")
-        result = run_command("python3 test_matrix_lib.py")
+        result = run_command("python3 tests/test_matrix_lib.py")
         print(result)
 
-    if os.path.exists("test_conv_lib.py"):
+    if os.path.exists("tests/test_conv_lib.py"):
         print("\n[Testing convolution library]")
-        result = run_command("python3 test_conv_lib.py")
+        result = run_command("python3 tests/test_conv_lib.py")
+        print(result)
+
+    if os.path.exists("cnn.py"):
+        print("\n[Testing CNN library]")
+        result = run_command("python3 cnn.py")
         print(result)
 
     print()
@@ -275,6 +282,7 @@ def main():
     print("  - convolution_analysis.png (convolution analysis)")
     print("  - libmatrix.so (matrix shared library)")
     print("  - libconv.so (convolution shared library)")
+    print("  - libcnn.so (CNN shared library)")
     print()
 
 
