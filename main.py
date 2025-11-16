@@ -117,7 +117,8 @@ def benchmark_convolution():
     print("Running Convolution Benchmarks")
     print("=" * 60)
 
-    Ms = [256, 512, 1024]
+    # Include MNIST (28x28) and CIFAR-10 (32x32) style image sizes
+    Ms = [28, 32, 256, 512, 1024]
     Ns = [3, 5, 7]
     conv_results = []
 
@@ -177,16 +178,23 @@ def plot_convolution_analysis(conv_df):
 
     ax1.set_xlabel("Image Size (M x M)")
     ax1.set_ylabel("Speedup (CPU/GPU)")
-    ax1.set_title("Convolution Speedup vs Image Size")
+    ax1.set_title("Convolution Speedup vs Image Size (including MNIST/CIFAR-10)")
+    ax1.set_xscale('log')
     ax1.grid(True)
     ax1.legend()
 
-    # Plot 2: Execution time comparison
-    df_512_5 = conv_df[(conv_df["Image_Size_M"] == 512) & (conv_df["Filter_Size_N"] == 5)]
-    if not df_512_5.empty:
-        ax2.bar(["CPU", "GPU"], [df_512_5["CPU_seconds"].values[0], df_512_5["GPU_seconds"].values[0]])
+    # Add vertical lines to highlight MNIST and CIFAR-10 sizes
+    ax1.axvline(x=28, color='gray', linestyle='--', alpha=0.3, linewidth=1)
+    ax1.axvline(x=32, color='gray', linestyle='--', alpha=0.3, linewidth=1)
+    ax1.text(28, ax1.get_ylim()[1]*0.95, 'MNIST', ha='center', fontsize=8, color='gray')
+    ax1.text(32, ax1.get_ylim()[1]*0.90, 'CIFAR-10', ha='center', fontsize=8, color='gray')
+
+    # Plot 2: Execution time comparison for MNIST-style (28x28 with 3x3 filter)
+    df_mnist = conv_df[(conv_df["Image_Size_M"] == 28) & (conv_df["Filter_Size_N"] == 3)]
+    if not df_mnist.empty:
+        ax2.bar(["CPU", "GPU"], [df_mnist["CPU_seconds"].values[0], df_mnist["GPU_seconds"].values[0]])
         ax2.set_ylabel("Time (seconds)")
-        ax2.set_title("Convolution Time (512x512 image, 5x5 filter)")
+        ax2.set_title("MNIST-style Convolution Time (28x28 image, 3x3 filter)")
         ax2.grid(True, axis='y')
 
     plt.tight_layout()
