@@ -31,13 +31,13 @@ N = 5    # Filter size
 np.random.seed(0)
 image = np.random.randint(0, 256, (M, M), dtype=np.uint32)
 
-# Edge detection filter (Sobel-like)
+# Simple blur filter (all positive values)
 filter_edge = np.array([
-    [-1, -1, -1, -1, -1],
-    [-1,  8,  8,  8, -1],
-    [-1,  8,  8,  8, -1],
-    [-1,  8,  8,  8, -1],
-    [-1, -1, -1, -1, -1]
+    [1, 1, 1, 1, 1],
+    [1, 2, 2, 2, 1],
+    [1, 2, 3, 2, 1],
+    [1, 2, 2, 2, 1],
+    [1, 1, 1, 1, 1]
 ], dtype=np.uint32)
 
 outputDim = M - N + 1
