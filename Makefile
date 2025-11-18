@@ -10,6 +10,10 @@ CNN_LIB = libcnn.so
 CONV_LIB = libconv.so
 MATRIX_LIB = libmatrix.so
 
+# Benchmark executables
+MATRIX_BENCHMARKS = matrix_cpu matrix_gpu_naive matrix_gpu_tiled matrix_cublas
+CONV_BENCHMARKS = conv_cpu conv_gpu
+
 # Source files
 CNN_SRC = lib/cnn_lib.cu
 CONV_SRC = lib/conv_lib.cu
@@ -39,10 +43,47 @@ $(MATRIX_LIB): $(MATRIX_SRC)
 	$(NVCC) $(NVCC_FLAGS) -o $@ $<
 	@echo "✓ $(MATRIX_LIB) built successfully"
 
+# Build matrix benchmark executables
+matrix_cpu: benchmarks/matrix_cpu.c
+	@echo "Compiling CPU matrix multiplication..."
+	gcc benchmarks/matrix_cpu.c -O2 -o matrix_cpu
+	@echo "✓ matrix_cpu built successfully"
+
+matrix_gpu_naive: benchmarks/matrix_gpu_naive.cu
+	@echo "Compiling naive GPU matrix multiplication..."
+	$(NVCC) benchmarks/matrix_gpu_naive.cu -O2 -o matrix_gpu_naive
+	@echo "✓ matrix_gpu_naive built successfully"
+
+matrix_gpu_tiled: benchmarks/matrix_gpu_tiled.cu
+	@echo "Compiling tiled GPU matrix multiplication..."
+	$(NVCC) benchmarks/matrix_gpu_tiled.cu -O2 -o matrix_gpu_tiled
+	@echo "✓ matrix_gpu_tiled built successfully"
+
+matrix_cublas: benchmarks/matrix_cublas.cu
+	@echo "Compiling cuBLAS matrix multiplication..."
+	$(NVCC) benchmarks/matrix_cublas.cu -lcublas -O2 -o matrix_cublas
+	@echo "✓ matrix_cublas built successfully"
+
+# Build convolution benchmark executables
+conv_cpu: benchmarks/conv_cpu.c
+	@echo "Compiling CPU convolution..."
+	gcc benchmarks/conv_cpu.c -O2 -o conv_cpu
+	@echo "✓ conv_cpu built successfully"
+
+conv_gpu: benchmarks/conv_gpu.cu
+	@echo "Compiling GPU convolution..."
+	$(NVCC) benchmarks/conv_gpu.cu -O2 -o conv_gpu
+	@echo "✓ conv_gpu built successfully"
+
+# Build all benchmarks
+benchmarks: $(MATRIX_BENCHMARKS) $(CONV_BENCHMARKS)
+	@echo "✓ All benchmark executables built successfully"
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
 	rm -f $(CNN_LIB) $(CONV_LIB) $(MATRIX_LIB)
+	rm -f $(MATRIX_BENCHMARKS) $(CONV_BENCHMARKS)
 	rm -f *.o
 	rm -rf __pycache__
 	rm -f tests/__pycache__
@@ -56,7 +97,7 @@ test: all
 	@echo "✓ All tests passed"
 
 # Run benchmarks
-benchmark: all
+benchmark: all benchmarks
 	@echo "Running performance benchmarks..."
 	python benchmarks.py
 	@echo "✓ Benchmarks complete"
@@ -86,6 +127,7 @@ help:
 	@echo "CUDA CNN Project - Makefile Commands"
 	@echo "===================================="
 	@echo "make              - Build all CUDA libraries"
+	@echo "make benchmarks   - Build benchmark executables"
 	@echo "make clean        - Remove build artifacts"
 	@echo "make test         - Build and run tests"
 	@echo "make benchmark    - Build and run performance benchmarks"
@@ -94,4 +136,4 @@ help:
 	@echo "make setup        - Full project setup"
 	@echo "make help         - Show this help message"
 
-.PHONY: all clean test benchmark check-cuda install-deps setup help
+.PHONY: all benchmarks clean test benchmark check-cuda install-deps setup help

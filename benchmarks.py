@@ -46,10 +46,8 @@ def compile_matrix_programs():
     print("Compiling Matrix Multiplication Programs")
     print("=" * 60)
 
-    run_command("gcc benchmarks/matrix_cpu.c -O2 -o matrix_cpu", "Compiling CPU version")
-    run_command("nvcc benchmarks/matrix_gpu_naive.cu -O2 -o matrix_gpu_naive", "Compiling naive GPU version")
-    run_command("nvcc benchmarks/matrix_gpu_tiled.cu -O2 -o matrix_gpu_tiled", "Compiling tiled GPU version")
-    run_command("nvcc benchmarks/matrix_cublas.cu -lcublas -O2 -o matrix_cublas", "Compiling cuBLAS version")
+    run_command("make matrix_cpu matrix_gpu_naive matrix_gpu_tiled matrix_cublas",
+                "Compiling matrix benchmarks")
 
     print("All matrix programs compiled successfully!\n")
 
@@ -60,8 +58,7 @@ def compile_convolution_programs():
     print("Compiling Convolution Programs")
     print("=" * 60)
 
-    run_command("gcc benchmarks/conv_cpu.c -O2 -o conv_cpu", "Compiling CPU convolution")
-    run_command("nvcc benchmarks/conv_gpu.cu -O2 -o conv_gpu", "Compiling GPU convolution")
+    run_command("make conv_cpu conv_gpu", "Compiling convolution benchmarks")
 
     print("All convolution programs compiled successfully!\n")
 
@@ -209,12 +206,7 @@ def compile_shared_libraries():
     print("Compiling Shared Libraries")
     print("=" * 60)
 
-    run_command("nvcc -Xcompiler -fPIC -shared lib/matrix_lib.cu -O2 -o libmatrix.so",
-                "Compiling matrix library")
-    run_command("nvcc -Xcompiler -fPIC -shared lib/conv_lib.cu -O2 -o libconv.so",
-                "Compiling convolution library")
-    run_command("nvcc -Xcompiler -fPIC -shared lib/cnn_lib.cu -O2 -o libcnn.so",
-                "Compiling CNN library")
+    run_command("make all", "Compiling shared libraries")
 
     print("Shared libraries compiled successfully!\n")
 
