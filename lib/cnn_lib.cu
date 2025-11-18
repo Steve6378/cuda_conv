@@ -3,6 +3,39 @@
 #include <math.h>
 
 // ============================================================================
+// ERROR CHECKING MACRO
+// ============================================================================
+
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t error = call; \
+        if (error != cudaSuccess) { \
+            fprintf(stderr, "CUDA Error: %s:%d, ", __FILE__, __LINE__); \
+            fprintf(stderr, "code: %d, reason: %s\n", error, \
+                    cudaGetErrorString(error)); \
+            exit(1); \
+        } \
+    } while(0)
+
+#define CUDA_CHECK_KERNEL() \
+    do { \
+        cudaError_t error = cudaGetLastError(); \
+        if (error != cudaSuccess) { \
+            fprintf(stderr, "CUDA Kernel Launch Error: %s:%d, ", __FILE__, __LINE__); \
+            fprintf(stderr, "code: %d, reason: %s\n", error, \
+                    cudaGetErrorString(error)); \
+            exit(1); \
+        } \
+        error = cudaDeviceSynchronize(); \
+        if (error != cudaSuccess) { \
+            fprintf(stderr, "CUDA Kernel Execution Error: %s:%d, ", __FILE__, __LINE__); \
+            fprintf(stderr, "code: %d, reason: %s\n", error, \
+                    cudaGetErrorString(error)); \
+            exit(1); \
+        } \
+    } while(0)
+
+// ============================================================================
 // CUDA KERNELS
 // ============================================================================
 
@@ -183,14 +216,14 @@ void cuda_conv2d(
 
     float *d_input, *d_weights, *d_bias, *d_output;
 
-    cudaMalloc(&d_input, batch_size * in_channels * input_h * input_w * sizeof(float));
-    cudaMalloc(&d_weights, out_channels * in_channels * kernel_h * kernel_w * sizeof(float));
-    cudaMalloc(&d_bias, out_channels * sizeof(float));
-    cudaMalloc(&d_output, total * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_input, batch_size * in_channels * input_h * input_w * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_weights, out_channels * in_channels * kernel_h * kernel_w * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_bias, out_channels * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_output, total * sizeof(float)));
 
-    cudaMemcpy(d_input, input, batch_size * in_channels * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_weights, weights, out_channels * in_channels * kernel_h * kernel_w * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_bias, bias, out_channels * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_input, input, batch_size * in_channels * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_weights, weights, out_channels * in_channels * kernel_h * kernel_w * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_bias, bias, out_channels * sizeof(float), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
@@ -201,28 +234,28 @@ void cuda_conv2d(
         input_h, input_w, kernel_h, kernel_w,
         stride, padding
     );
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(output, d_output, total * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(output, d_output, total * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cudaFree(d_input);
-    cudaFree(d_weights);
-    cudaFree(d_bias);
-    cudaFree(d_output);
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_weights));
+    CUDA_CHECK(cudaFree(d_bias));
+    CUDA_CHECK(cudaFree(d_output));
 }
 
 void cuda_relu(float* data, int size) {
     float* d_data;
-    cudaMalloc(&d_data, size * sizeof(float));
-    cudaMemcpy(d_data, data, size * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMalloc(&d_data, size * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_data, data, size * sizeof(float), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (size + threads - 1) / threads;
     relu_kernel<<<blocks, threads>>>(d_data, size);
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(data, d_data, size * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_data);
+    CUDA_CHECK(cudaMemcpy(data, d_data, size * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_data));
 }
 
 void cuda_maxpool2d(
@@ -240,10 +273,10 @@ void cuda_maxpool2d(
     int total = batch_size * channels * out_h * out_w;
 
     float *d_input, *d_output;
-    cudaMalloc(&d_input, batch_size * channels * input_h * input_w * sizeof(float));
-    cudaMalloc(&d_output, total * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_input, batch_size * channels * input_h * input_w * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_output, total * sizeof(float)));
 
-    cudaMemcpy(d_input, input, batch_size * channels * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_input, input, batch_size * channels * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
@@ -253,11 +286,11 @@ void cuda_maxpool2d(
         input_h, input_w,
         pool_size, stride
     );
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(output, d_output, total * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_input);
-    cudaFree(d_output);
+    CUDA_CHECK(cudaMemcpy(output, d_output, total * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
 }
 
 void cuda_fc(
@@ -272,14 +305,14 @@ void cuda_fc(
     int total = batch_size * out_features;
 
     float *d_input, *d_weights, *d_bias, *d_output;
-    cudaMalloc(&d_input, batch_size * in_features * sizeof(float));
-    cudaMalloc(&d_weights, out_features * in_features * sizeof(float));
-    cudaMalloc(&d_bias, out_features * sizeof(float));
-    cudaMalloc(&d_output, total * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_input, batch_size * in_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_weights, out_features * in_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_bias, out_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_output, total * sizeof(float)));
 
-    cudaMemcpy(d_input, input, batch_size * in_features * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_weights, weights, out_features * in_features * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_bias, bias, out_features * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_input, input, batch_size * in_features * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_weights, weights, out_features * in_features * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_bias, bias, out_features * sizeof(float), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
@@ -287,25 +320,25 @@ void cuda_fc(
         d_input, d_weights, d_bias, d_output,
         batch_size, in_features, out_features
     );
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(output, d_output, total * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_input);
-    cudaFree(d_weights);
-    cudaFree(d_bias);
-    cudaFree(d_output);
+    CUDA_CHECK(cudaMemcpy(output, d_output, total * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_weights));
+    CUDA_CHECK(cudaFree(d_bias));
+    CUDA_CHECK(cudaFree(d_output));
 }
 
 void cuda_softmax(float* data, int batch_size, int num_classes) {
     float* d_data;
-    cudaMalloc(&d_data, batch_size * num_classes * sizeof(float));
-    cudaMemcpy(d_data, data, batch_size * num_classes * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMalloc(&d_data, batch_size * num_classes * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_data, data, batch_size * num_classes * sizeof(float), cudaMemcpyHostToDevice));
 
     softmax_kernel<<<batch_size, 1>>>(d_data, batch_size, num_classes);
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(data, d_data, batch_size * num_classes * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_data);
+    CUDA_CHECK(cudaMemcpy(data, d_data, batch_size * num_classes * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_data));
 }
 
 // Softmax + Cross-entropy backward (combined for numerical stability)
@@ -345,25 +378,25 @@ void cuda_softmax_cross_entropy_backward(
     float *d_predictions, *d_grad_output;
     int *d_labels;
 
-    cudaMalloc(&d_predictions, total * sizeof(float));
-    cudaMalloc(&d_labels, batch_size * sizeof(int));
-    cudaMalloc(&d_grad_output, total * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_predictions, total * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_labels, batch_size * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&d_grad_output, total * sizeof(float)));
 
-    cudaMemcpy(d_predictions, predictions, total * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_labels, labels, batch_size * sizeof(int), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_predictions, predictions, total * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_labels, labels, batch_size * sizeof(int), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
     softmax_cross_entropy_backward_kernel<<<blocks, threads>>>(
         d_predictions, d_labels, d_grad_output, batch_size, num_classes
     );
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(grad_output, d_grad_output, total * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(grad_output, d_grad_output, total * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cudaFree(d_predictions);
-    cudaFree(d_labels);
-    cudaFree(d_grad_output);
+    CUDA_CHECK(cudaFree(d_predictions));
+    CUDA_CHECK(cudaFree(d_labels));
+    CUDA_CHECK(cudaFree(d_grad_output));
 }
 
 // Cross-entropy loss (forward)
@@ -449,16 +482,16 @@ void cuda_fc_backward(
 
     float *d_grad_output, *d_input, *d_weights, *d_grad_input, *d_grad_weights, *d_grad_bias;
 
-    cudaMalloc(&d_grad_output, batch_size * out_features * sizeof(float));
-    cudaMalloc(&d_input, batch_size * in_features * sizeof(float));
-    cudaMalloc(&d_weights, out_features * in_features * sizeof(float));
-    cudaMalloc(&d_grad_input, batch_size * in_features * sizeof(float));
-    cudaMalloc(&d_grad_weights, out_features * in_features * sizeof(float));
-    cudaMalloc(&d_grad_bias, out_features * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_grad_output, batch_size * out_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_input, batch_size * in_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_weights, out_features * in_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_input, batch_size * in_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_weights, out_features * in_features * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_bias, out_features * sizeof(float)));
 
-    cudaMemcpy(d_grad_output, grad_output, batch_size * out_features * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_input, input, batch_size * in_features * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_weights, weights, out_features * in_features * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_grad_output, grad_output, batch_size * out_features * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, input, batch_size * in_features * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_weights, weights, out_features * in_features * sizeof(float), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (max_size + threads - 1) / threads;
@@ -468,19 +501,18 @@ void cuda_fc_backward(
         d_grad_input, d_grad_weights, d_grad_bias,
         batch_size, in_features, out_features
     );
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaMemcpy(grad_input, d_grad_input, batch_size * in_features * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(grad_weights, d_grad_weights, out_features * in_features * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(grad_bias, d_grad_bias, out_features * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cudaMemcpy(grad_input, d_grad_input, batch_size * in_features * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(grad_weights, d_grad_weights, out_features * in_features * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(grad_bias, d_grad_bias, out_features * sizeof(float), cudaMemcpyDeviceToHost);
-
-    cudaFree(d_grad_output);
-    cudaFree(d_input);
-    cudaFree(d_weights);
-    cudaFree(d_grad_input);
-    cudaFree(d_grad_weights);
-    cudaFree(d_grad_bias);
+    CUDA_CHECK(cudaFree(d_grad_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_weights));
+    CUDA_CHECK(cudaFree(d_grad_input));
+    CUDA_CHECK(cudaFree(d_grad_weights));
+    CUDA_CHECK(cudaFree(d_grad_bias));
 }
 
 // ReLU backward
@@ -504,23 +536,23 @@ void cuda_relu_backward(
 ) {
     float *d_grad_output, *d_input, *d_grad_input;
 
-    cudaMalloc(&d_grad_output, size * sizeof(float));
-    cudaMalloc(&d_input, size * sizeof(float));
-    cudaMalloc(&d_grad_input, size * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_grad_output, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_input, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_input, size * sizeof(float)));
 
-    cudaMemcpy(d_grad_output, grad_output, size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_input, input, size * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_grad_output, grad_output, size * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, input, size * sizeof(float), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (size + threads - 1) / threads;
     relu_backward_kernel<<<blocks, threads>>>(d_grad_output, d_input, d_grad_input, size);
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(grad_input, d_grad_input, size * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(grad_input, d_grad_input, size * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cudaFree(d_grad_output);
-    cudaFree(d_input);
-    cudaFree(d_grad_input);
+    CUDA_CHECK(cudaFree(d_grad_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_grad_input));
 }
 
 // MaxPool backward
@@ -552,15 +584,16 @@ __global__ void maxpool2d_backward_kernel(
         float grad = grad_output[idx];
 
         // Find which input position produced the max
-        for (int ph = 0; ph < pool_size; ph++) {
-            for (int pw = 0; pw < pool_size; pw++) {
+        bool found = false;
+        for (int ph = 0; ph < pool_size && !found; ph++) {
+            for (int pw = 0; pw < pool_size && !found; pw++) {
                 int h_in = h_out * stride + ph;
                 int w_in = w_out * stride + pw;
                 int input_idx = ((b * channels + c) * input_h + h_in) * input_w + w_in;
 
                 if (input[input_idx] == max_val) {
                     atomicAdd(&grad_input[input_idx], grad);
-                    return;  // Only one position gets the gradient
+                    found = true;  // Only one position gets the gradient
                 }
             }
         }
@@ -586,15 +619,15 @@ void cuda_maxpool2d_backward(
 
     float *d_grad_output, *d_input, *d_output, *d_grad_input;
 
-    cudaMalloc(&d_grad_output, total_out * sizeof(float));
-    cudaMalloc(&d_input, total_in * sizeof(float));
-    cudaMalloc(&d_output, total_out * sizeof(float));
-    cudaMalloc(&d_grad_input, total_in * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_grad_output, total_out * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_input, total_in * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_output, total_out * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_input, total_in * sizeof(float)));
 
-    cudaMemcpy(d_grad_output, grad_output, total_out * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_input, input, total_in * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_output, output, total_out * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemset(d_grad_input, 0, total_in * sizeof(float));  // Initialize to zero
+    CUDA_CHECK(cudaMemcpy(d_grad_output, grad_output, total_out * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, input, total_in * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_output, output, total_out * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemset(d_grad_input, 0, total_in * sizeof(float)));  // Initialize to zero
 
     int threads = 256;
     int blocks = (total_out + threads - 1) / threads;
@@ -603,24 +636,21 @@ void cuda_maxpool2d_backward(
         d_grad_output, d_input, d_output, d_grad_input,
         batch_size, channels, input_h, input_w, pool_size, stride
     );
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(grad_input, d_grad_input, total_in * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(grad_input, d_grad_input, total_in * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cudaFree(d_grad_output);
-    cudaFree(d_input);
-    cudaFree(d_output);
-    cudaFree(d_grad_input);
+    CUDA_CHECK(cudaFree(d_grad_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_grad_input));
 }
 
-// Conv2D backward (simplified - computes all gradients)
-__global__ void conv2d_backward_kernel(
+// Conv2D backward - compute grad_input
+__global__ void conv2d_backward_input_kernel(
     const float* grad_output,  // [batch, out_channels, out_h, out_w]
-    const float* input,        // [batch, in_channels, input_h, input_w]
     const float* weights,      // [out_channels, in_channels, kernel_h, kernel_w]
     float* grad_input,         // [batch, in_channels, input_h, input_w]
-    float* grad_weights,       // [out_channels, in_channels, kernel_h, kernel_w]
-    float* grad_bias,          // [out_channels]
     int batch_size,
     int in_channels,
     int out_channels,
@@ -633,20 +663,114 @@ __global__ void conv2d_backward_kernel(
 ) {
     int out_h = (input_h + 2 * padding - kernel_h) / stride + 1;
     int out_w = (input_w + 2 * padding - kernel_w) / stride + 1;
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    // Compute grad_bias (simple sum over all positions)
-    if (idx < out_channels) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = batch_size * in_channels * input_h * input_w;
+
+    if (idx < total) {
+        int w_in = idx % input_w;
+        int h_in = (idx / input_w) % input_h;
+        int c_in = (idx / (input_w * input_h)) % in_channels;
+        int b = idx / (input_w * input_h * in_channels);
+
+        float grad = 0.0f;
+
+        // For each output channel and position that uses this input position
+        for (int c_out = 0; c_out < out_channels; c_out++) {
+            for (int kh = 0; kh < kernel_h; kh++) {
+                for (int kw = 0; kw < kernel_w; kw++) {
+                    // Which output positions are affected by this input position?
+                    int h_out = (h_in + padding - kh);
+                    int w_out = (w_in + padding - kw);
+
+                    if (h_out % stride == 0 && w_out % stride == 0) {
+                        h_out /= stride;
+                        w_out /= stride;
+
+                        if (h_out >= 0 && h_out < out_h && w_out >= 0 && w_out < out_w) {
+                            int grad_out_idx = ((b * out_channels + c_out) * out_h + h_out) * out_w + w_out;
+                            int weight_idx = ((c_out * in_channels + c_in) * kernel_h + kh) * kernel_w + kw;
+                            grad += grad_output[grad_out_idx] * weights[weight_idx];
+                        }
+                    }
+                }
+            }
+        }
+
+        grad_input[idx] = grad;
+    }
+}
+
+// Conv2D backward - compute grad_weights
+__global__ void conv2d_backward_weights_kernel(
+    const float* grad_output,  // [batch, out_channels, out_h, out_w]
+    const float* input,        // [batch, in_channels, input_h, input_w]
+    float* grad_weights,       // [out_channels, in_channels, kernel_h, kernel_w]
+    int batch_size,
+    int in_channels,
+    int out_channels,
+    int input_h,
+    int input_w,
+    int kernel_h,
+    int kernel_w,
+    int stride,
+    int padding
+) {
+    int out_h = (input_h + 2 * padding - kernel_h) / stride + 1;
+    int out_w = (input_w + 2 * padding - kernel_w) / stride + 1;
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = out_channels * in_channels * kernel_h * kernel_w;
+
+    if (idx < total) {
+        int kw = idx % kernel_w;
+        int kh = (idx / kernel_w) % kernel_h;
+        int c_in = (idx / (kernel_w * kernel_h)) % in_channels;
+        int c_out = idx / (kernel_w * kernel_h * in_channels);
+
+        float grad = 0.0f;
+
+        for (int b = 0; b < batch_size; b++) {
+            for (int oh = 0; oh < out_h; oh++) {
+                for (int ow = 0; ow < out_w; ow++) {
+                    int h_in = oh * stride - padding + kh;
+                    int w_in = ow * stride - padding + kw;
+
+                    if (h_in >= 0 && h_in < input_h && w_in >= 0 && w_in < input_w) {
+                        int grad_out_idx = ((b * out_channels + c_out) * out_h + oh) * out_w + ow;
+                        int input_idx = ((b * in_channels + c_in) * input_h + h_in) * input_w + w_in;
+                        grad += grad_output[grad_out_idx] * input[input_idx];
+                    }
+                }
+            }
+        }
+
+        grad_weights[idx] = grad;
+    }
+}
+
+// Conv2D backward - compute grad_bias
+__global__ void conv2d_backward_bias_kernel(
+    const float* grad_output,  // [batch, out_channels, out_h, out_w]
+    float* grad_bias,          // [out_channels]
+    int batch_size,
+    int out_channels,
+    int out_h,
+    int out_w
+) {
+    int c_out = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (c_out < out_channels) {
         float grad = 0.0f;
         for (int b = 0; b < batch_size; b++) {
             for (int h = 0; h < out_h; h++) {
                 for (int w = 0; w < out_w; w++) {
-                    int out_idx = ((b * out_channels + idx) * out_h + h) * out_w + w;
+                    int out_idx = ((b * out_channels + c_out) * out_h + h) * out_w + w;
                     grad += grad_output[out_idx];
                 }
             }
         }
-        grad_bias[idx] = grad;
+        grad_bias[c_out] = grad;
     }
 }
 
@@ -670,52 +794,67 @@ void cuda_conv2d_backward(
     int out_h = (input_h + 2 * padding - kernel_h) / stride + 1;
     int out_w = (input_w + 2 * padding - kernel_w) / stride + 1;
 
-    // For simplicity, compute gradients on CPU (or use cuDNN in practice)
-    // This is a simplified implementation - a full one would parallelize better
-
-    // Initialize gradients to zero
     int input_size = batch_size * in_channels * input_h * input_w;
+    int output_size = batch_size * out_channels * out_h * out_w;
     int weight_size = out_channels * in_channels * kernel_h * kernel_w;
 
-    memset(grad_input, 0, input_size * sizeof(float));
-    memset(grad_weights, 0, weight_size * sizeof(float));
-    memset(grad_bias, 0, out_channels * sizeof(float));
+    // Allocate device memory
+    float *d_grad_output, *d_input, *d_weights;
+    float *d_grad_input, *d_grad_weights, *d_grad_bias;
 
-    // Compute gradients (CPU version for simplicity)
-    for (int b = 0; b < batch_size; b++) {
-        for (int oc = 0; oc < out_channels; oc++) {
-            for (int oh = 0; oh < out_h; oh++) {
-                for (int ow = 0; ow < out_w; ow++) {
-                    int out_idx = ((b * out_channels + oc) * out_h + oh) * out_w + ow;
-                    float grad = grad_output[out_idx];
+    CUDA_CHECK(cudaMalloc(&d_grad_output, output_size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_input, input_size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_weights, weight_size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_input, input_size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_weights, weight_size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_grad_bias, out_channels * sizeof(float)));
 
-                    // Accumulate bias gradient
-                    grad_bias[oc] += grad;
+    // Copy inputs to device
+    CUDA_CHECK(cudaMemcpy(d_grad_output, grad_output, output_size * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_input, input, input_size * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_weights, weights, weight_size * sizeof(float), cudaMemcpyHostToDevice));
 
-                    // Accumulate weight and input gradients
-                    for (int ic = 0; ic < in_channels; ic++) {
-                        for (int kh = 0; kh < kernel_h; kh++) {
-                            for (int kw = 0; kw < kernel_w; kw++) {
-                                int h_in = oh * stride - padding + kh;
-                                int w_in = ow * stride - padding + kw;
+    int threads = 256;
+    int blocks;
 
-                                if (h_in >= 0 && h_in < input_h && w_in >= 0 && w_in < input_w) {
-                                    int input_idx = ((b * in_channels + ic) * input_h + h_in) * input_w + w_in;
-                                    int weight_idx = ((oc * in_channels + ic) * kernel_h + kh) * kernel_w + kw;
+    // Compute grad_input
+    blocks = (input_size + threads - 1) / threads;
+    conv2d_backward_input_kernel<<<blocks, threads>>>(
+        d_grad_output, d_weights, d_grad_input,
+        batch_size, in_channels, out_channels,
+        input_h, input_w, kernel_h, kernel_w, stride, padding
+    );
+    CUDA_CHECK_KERNEL();
 
-                                    // Gradient w.r.t. weights
-                                    grad_weights[weight_idx] += grad * input[input_idx];
+    // Compute grad_weights
+    blocks = (weight_size + threads - 1) / threads;
+    conv2d_backward_weights_kernel<<<blocks, threads>>>(
+        d_grad_output, d_input, d_grad_weights,
+        batch_size, in_channels, out_channels,
+        input_h, input_w, kernel_h, kernel_w, stride, padding
+    );
+    CUDA_CHECK_KERNEL();
 
-                                    // Gradient w.r.t. input
-                                    grad_input[input_idx] += grad * weights[weight_idx];
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // Compute grad_bias
+    blocks = (out_channels + threads - 1) / threads;
+    conv2d_backward_bias_kernel<<<blocks, threads>>>(
+        d_grad_output, d_grad_bias,
+        batch_size, out_channels, out_h, out_w
+    );
+    CUDA_CHECK_KERNEL();
+
+    // Copy results back to host
+    CUDA_CHECK(cudaMemcpy(grad_input, d_grad_input, input_size * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(grad_weights, d_grad_weights, weight_size * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(grad_bias, d_grad_bias, out_channels * sizeof(float), cudaMemcpyDeviceToHost));
+
+    // Free device memory
+    CUDA_CHECK(cudaFree(d_grad_output));
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_weights));
+    CUDA_CHECK(cudaFree(d_grad_input));
+    CUDA_CHECK(cudaFree(d_grad_weights));
+    CUDA_CHECK(cudaFree(d_grad_bias));
 }
 
 // SGD parameter update kernel
@@ -738,21 +877,21 @@ void cuda_sgd_update(
     int size
 ) {
     float *d_params, *d_gradients;
-    cudaMalloc(&d_params, size * sizeof(float));
-    cudaMalloc(&d_gradients, size * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_params, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_gradients, size * sizeof(float)));
 
-    cudaMemcpy(d_params, params, size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_gradients, gradients, size * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_params, params, size * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_gradients, gradients, size * sizeof(float), cudaMemcpyHostToDevice));
 
     int threads = 256;
     int blocks = (size + threads - 1) / threads;
     sgd_update_kernel<<<blocks, threads>>>(d_params, d_gradients, learning_rate, size);
+    CUDA_CHECK_KERNEL();
 
-    cudaDeviceSynchronize();
-    cudaMemcpy(params, d_params, size * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(params, d_params, size * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cudaFree(d_params);
-    cudaFree(d_gradients);
+    CUDA_CHECK(cudaFree(d_params));
+    CUDA_CHECK(cudaFree(d_gradients));
 }
 
 } // extern "C"

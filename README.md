@@ -14,8 +14,8 @@ This project implements a complete CNN training pipeline using CUDA C/C++ for pe
 ### Architecture
 
 ```
-Input (28x28x1) → Conv(5x5, 8 filters) → ReLU → MaxPool(2x2) →
-Conv(5x5, 16 filters) → ReLU → MaxPool(2x2) → Flatten →
+Input (28x28x1) → Conv(3x3, 32 filters, pad=1) → ReLU → MaxPool(2x2) →
+Conv(3x3, 64 filters, pad=1) → ReLU → MaxPool(2x2) → Flatten →
 Fully Connected(10 classes) → Softmax
 ```
 
@@ -145,18 +145,26 @@ The CUDA implementation provides significant speedups over CPU:
 ## CUDA Kernels Implemented
 
 ### Forward Pass
-- `cuda_conv2d` - 2D convolution with shared memory optimization
+- `cuda_conv2d` - 2D convolution with padding support
 - `cuda_relu` - ReLU activation
 - `cuda_maxpool2d` - 2x2 max pooling
-- `cuda_fully_connected` - Dense layer
+- `cuda_fc` - Fully connected (dense) layer
 - `cuda_softmax` - Softmax activation with numerical stability
 
 ### Backward Pass
-- `cuda_conv2d_backward` - Convolution gradient computation
+- `cuda_conv2d_backward` - **GPU-accelerated** convolution gradient computation (input, weights, bias)
 - `cuda_relu_backward` - ReLU gradient
-- `cuda_maxpool2d_backward` - Max pooling gradient with index tracking
-- `cuda_fully_connected_backward` - Dense layer gradients
-- `cuda_softmax_cross_entropy_backward` - Combined softmax+CE gradient
+- `cuda_maxpool2d_backward` - Max pooling gradient with proper gradient routing
+- `cuda_fc_backward` - Fully connected layer gradients
+- `cuda_softmax_cross_entropy_backward` - Combined softmax+CE gradient for numerical stability
+- `cuda_sgd_update` - Stochastic gradient descent parameter updates
+
+### Error Handling
+All CUDA operations include comprehensive error checking to catch:
+- Memory allocation failures
+- Kernel launch errors
+- Memory copy failures
+- Kernel execution errors
 
 ## Development
 
@@ -171,6 +179,23 @@ The CUDA implementation provides significant speedups over CPU:
 1. Implement forward and backward CUDA kernels in `lib/cnn_lib.cu`
 2. Add Python wrapper methods in `cnn.py`
 3. Add tests in `tests/`
+
+## Known Limitations and Future Optimizations
+
+### Memory Management
+The current implementation transfers data between CPU and GPU for each operation. For better performance, consider:
+- Keeping all tensors on GPU throughout forward/backward passes
+- Implementing a GPU memory pool to reduce allocation overhead
+- Using persistent device memory across training iterations
+
+### Convolution Optimization
+- Current implementation uses naive convolution algorithm
+- Consider implementing im2col + GEMM for better performance
+- Shared memory optimizations can improve cache efficiency
+
+### Batch Processing
+- All kernels support batched operations
+- Larger batch sizes generally achieve better GPU utilization
 
 ## Troubleshooting
 
@@ -191,6 +216,12 @@ Error: out of memory
 ModuleNotFoundError: No module named 'numpy'
 ```
 **Solution**: Install dependencies with `pip install -r requirements.txt`
+
+### CUDA Errors
+If you see CUDA errors, the library now includes detailed error messages showing:
+- File and line number where error occurred
+- Error code and description
+- This helps quickly identify issues with GPU operations
 
 ## References
 
