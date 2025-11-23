@@ -130,15 +130,6 @@ python tests/test_conv_lib.py
 python tests/test_matrix_lib.py
 ```
 
-## Performance
-
-The CUDA implementation provides significant speedups over CPU:
-
-| Operation | CPU Time | GPU Time | Speedup |
-|-----------|----------|----------|---------|
-| Conv 28x28 | ~500ms | ~5ms | ~100x |
-| MaxPool | ~50ms | ~1ms | ~50x |
-| Matrix Mult (1024x1024) | ~2000ms | ~20ms | ~100x |
 
 *Benchmarks run on NVIDIA RTX 3080*
 
@@ -232,15 +223,3 @@ If you see CUDA errors, the library now includes detailed error messages showing
 ## License
 
 This project is for educational purposes.
-
-## Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
-
-## Authors
-
-Built as part of a GPU computing and deep learning project.
