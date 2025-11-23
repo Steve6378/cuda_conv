@@ -451,7 +451,8 @@ def load_mnist(data_dir='./data'):
     """Download and load MNIST dataset"""
     os.makedirs(data_dir, exist_ok=True)
 
-    base_url = 'http://yann.lecun.com/exdb/mnist/'
+    # Use a more reliable mirror (Google's mirror for MNIST)
+    base_url = 'https://storage.googleapis.com/cvdf-datasets/mnist/'
     files = {
         'train_images': 'train-images-idx3-ubyte.gz',
         'train_labels': 'train-labels-idx1-ubyte.gz',
