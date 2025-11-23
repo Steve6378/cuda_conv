@@ -1,0 +1,23 @@
+# Compiled executables
+conv_cpu
+conv_gpu
+matrix_cpu
+matrix_gpu_naive
+matrix_gpu_tiled
+matrix_cublas
+
+# Shared libraries
+*.so
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated results and plots
+results.csv
+convolution_results.csv
+speedup_plot.png
+convolution_analysis.png
+
+# Data directory (MNIST downloads)
+data/
