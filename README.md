@@ -130,9 +130,6 @@ python tests/test_conv_lib.py
 python tests/test_matrix_lib.py
 ```
 
-
-*Benchmarks run on NVIDIA RTX 3080*
-
 ## CUDA Kernels Implemented
 
 ### Forward Pass
